@@ -119,7 +119,7 @@ class Network(nn.Module):
         self.dsnas = args.dsnas
         self._world_size = world_size
         self._use_ckpt = args.use_ckpt
-        self._resample_layer = args.resample_layer
+        self._resample_layer = args.resample_layer # resample at each layer
         self._C = C
         self._num_classes = num_classes
         self._layers = layers
@@ -302,7 +302,7 @@ class Network(nn.Module):
             
             self.load_child_state_dict(model_child)
             normal_weights.requires_grad_()
-            reduce_weights.requires_grad_()
+            reduce_weights.requires_grad_() # TODO important for computing dL/dZ
             logits, logits_aux = model_child(input, normal_weights, reduce_weights)
             
             error_loss = criterion(logits, target)
@@ -316,7 +316,7 @@ class Network(nn.Module):
                 reduce_ratio_clip = torch.clamp(reduce_ratio, min=1-self.args.prox_policy_epi, max=1+self.args.prox_policy_epi)
                 loss_alpha = (torch.log(torch.max(normal_ratio, normal_ratio_clip))+torch.log(torch.max(reduce_ratio, reduce_ratio_clip))).sum()
             else:
-                loss_alpha = (torch.log(normal_one_hot_prob) + torch.log(reduce_one_hot_prob)).sum()
+                loss_alpha = (torch.log(normal_one_hot_prob) + torch.log(reduce_one_hot_prob)).sum() # TODO important log P(Z)
             
             if self.args.auxiliary and self.training:
                 loss_aux = criterion(logits_aux, target)
@@ -328,14 +328,14 @@ class Network(nn.Module):
                     entropy_loss = self._arch_entropy(self.normal_log_alpha) + self._arch_entropy(self.reduce_log_alpha)
                     loss = error_loss.clone() + loss_alpha.clone() + entropy_loss
                 else:    
-                    loss = error_loss.clone() + loss_alpha.clone()
+                    loss = error_loss.clone() + loss_alpha.clone() # TODO important log P(Z)
                 if self.args.distributed:
                     loss.div_(self._world_size)
 
                 for v in model_child.parameters():
                     if v.grad is not None:
                         v.grad = None
-                loss.backward()
+                loss.backward() # compute grads to theta and alpha
 
                 if self.args.edge_reward_norm:
                     normal_edge_reward_mean = normal_weights.grad.sum(-1).mean()
@@ -357,12 +357,12 @@ class Network(nn.Module):
                         self.reduce_edge_reward = reduce_weights.grad.sum(-1)/self.reduce_edge_reward_running_var 
  
                 else:
-                    self.normal_edge_reward = normal_weights.grad.sum(-1)
+                    self.normal_edge_reward = normal_weights.grad.sum(-1)  # dL/dZ
                     self.reduce_edge_reward = reduce_weights.grad.sum(-1)
                     
                 
-                self.normal_log_alpha.grad = self.normal_log_alpha.grad.detach()*self.normal_edge_reward.view(-1,1)
-                self.reduce_log_alpha.grad = self.reduce_log_alpha.grad.detach()*self.reduce_edge_reward.view(-1,1)
+                self.normal_log_alpha.grad = self.normal_log_alpha.grad.detach()*self.normal_edge_reward.view(-1,1) # d(log P(Z) + loss)/dalpha = d(log P(Z))/dalpha
+                self.reduce_log_alpha.grad = self.reduce_log_alpha.grad.detach()*self.reduce_edge_reward.view(-1,1)  #Update grads for alpha
 
                 state_dict = self.state_dict()
                 child_state_dict = model_child.state_dict()
@@ -571,7 +571,7 @@ class Network(nn.Module):
                     total_penalty[-1] += resource_penalty.sum()
                     total_penalty[-2] += resource_penalty.sum()
 
-                concrete_log_prob = self.logp(log_alpha, weights)
+                concrete_log_prob = self.logp(log_alpha, weights) # weights is Z
                 if cell.reduction:
                     # baseline
                     total_penalty[8] += resource_size_baseline.sum()

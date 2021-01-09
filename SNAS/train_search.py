@@ -80,7 +80,7 @@ parser.add_argument('--resample_layer', action='store_true', default=False, help
 parser.add_argument('--random_sample', action='store_true', default=False, help='true if sample randomly')
 parser.add_argument('--random_sample_fix_temp', action='store_true', default=False, help='true if sample randomly with fixed temp')
 parser.add_argument('--random_sample_pretrain', action='store_true', default=False, help='true if using random sample pretrain')
-parser.add_argument('--random_sample_pretrain_epoch', type=int, default=50, help='child graph sampling pretrain epochs')
+parser.add_argument('--random_sample_pretrain_epoch', type=int, default=50, help='child graph sampling pretrain epochs') #TODO what's this for?
 parser.add_argument('--loc_mean', type=float, default=1, help='initial mean value to generate the location')
 parser.add_argument('--loc_std', type=float, default=0.01, help='initial std to generate the location')
 
@@ -314,8 +314,8 @@ class neural_architecture_search():
         self.temp_scheduler = utils.Temp_Scheduler(self.args.epochs, self.model._temp, self.args.temp, temp_min=self.args.temp_min)
 
         for epoch in range(self.args.epochs):
-            if self.args.random_sample_pretrain:
-                if epoch < self.args.random_sample_pretrain_epoch:
+            if self.args.random_sample_pretrain: # not relevant
+                if epoch < self.args.random_sample_pretrain_epoch: #
                     self.args.random_sample = True
                 else:
                     self.args.random_sample = False
@@ -353,7 +353,7 @@ class neural_architecture_search():
             # validation
             self.model.eval()
             valid_acc, valid_obj = self.infer(epoch)
-            if self.args.gen_max_child:
+            if self.args.gen_max_child: # evaluate the best children network
                 self.args.gen_max_child_flag = True
                 valid_acc_max_child, valid_obj_max_child = self.infer(epoch)                
                 self.args.gen_max_child_flag = False
@@ -392,7 +392,7 @@ class neural_architecture_search():
 
         count = 0
         for step, (input, target) in enumerate(self.train_queue):
-            if self.args.alternate_update:
+            if self.args.alternate_update: # alternate between theta update and alpha update
                 if step % 2 == 0:
                     self.update_theta = True
                     self.update_alpha = False
@@ -404,8 +404,8 @@ class neural_architecture_search():
             input = input.to(self.device)
             target = target.to(self.device, non_blocking=True)
             if self.args.snas:
-                logits, logits_aux, penalty, op_normal, op_reduce = self.model(input)
-                error_loss = self.criterion(logits, target)
+                logits, logits_aux, penalty, op_normal, op_reduce = self.model(input) #TODO study this
+                error_loss = self.criterion(logits, target)  # cross entropy loss
                 if self.args.auxiliary:
                     loss_aux = self.criterion(logits_aux, target)
                     error_loss += self.args.auxiliary_weight*loss_aux
@@ -447,7 +447,7 @@ class neural_architecture_search():
                 resource_loss = self.model._resource_lambda * resource_penalty
                 
 
-            if self.args.loss:
+            if self.args.loss: # add loss
                 if self.args.snas:
                     loss = resource_loss.clone() + error_loss.clone()
                 elif self.args.dsnas:
@@ -478,7 +478,7 @@ class neural_architecture_search():
             if self.args.snas:
                 self.optimizer.zero_grad()
                 self.arch_optimizer.zero_grad()
-                error_loss.backward(retain_graph=True)
+                error_loss.backward(retain_graph=True) # error loss grads w.r.t alpha
                 if not self.args.random_sample:
                     normal_loss_gradient += self.model.normal_log_alpha.grad
                     reduce_loss_gradient += self.model.reduce_log_alpha.grad
@@ -486,7 +486,7 @@ class neural_architecture_search():
                 self.arch_optimizer.zero_grad()
 
             if self.args.snas or not self.args.random_sample and not self.args.dsnas:
-                loss.backward()
+                loss.backward()     # total loss grads w.r.t alpha
             if not self.args.random_sample:
                 normal_total_gradient += self.model.normal_log_alpha.grad
                 reduce_total_gradient += self.model.reduce_log_alpha.grad
@@ -500,11 +500,11 @@ class neural_architecture_search():
                 arch_grad_norm = nn.utils.clip_grad_norm_(
                     [param for name, param in self.model.named_parameters() if name == 'normal_log_alpha' or name == 'reduce_log_alpha'], 10.
                 )
-            else:
+            else: # clip gradients for theta and alpha
                 nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
                 arch_grad_norm = nn.utils.clip_grad_norm_(self.model.arch_parameters(), 10.)
 
-            grad.update(arch_grad_norm)
+            grad.update(arch_grad_norm) # store gradients # TODO update arch alphas
             if not self.args.fix_weight and self.update_theta:
                 self.optimizer.step()
             self.optimizer.zero_grad() 
