@@ -69,6 +69,8 @@ parser.add_argument('--add_entropy_loss', action='store_true', default=False, he
 parser.add_argument('--alternate_update', action='store_true', default=False, help='add entropy loss')
 parser.add_argument('--enas_reward', action='store_true', default=False, help='enas reward')
 parser.add_argument('--enas_reward_norm', action='store_true', default=False, help='enas reward norm')
+parser.add_argument('--alter_metric', type=str, default='sotl', help='alternative model selection criteria')
+
 
 # Sampling settings
 parser.add_argument('--temp', type=float, default=1, help='initial temperature(beta)')
@@ -312,6 +314,9 @@ class neural_architecture_search():
             self.optimizer, float(self.args.epochs), eta_min=self.args.learning_rate_min)
 
         self.temp_scheduler = utils.Temp_Scheduler(self.args.epochs, self.model._temp, self.args.temp, temp_min=self.args.temp_min)
+        if 'sotl' in self.args.alter_metric:
+            self.normal_log_alpha_grad_list = []
+            self.reduce_log_alpha_grad_list = []
 
         for epoch in range(self.args.epochs):
             if self.args.random_sample_pretrain: # not relevant
@@ -399,7 +404,7 @@ class neural_architecture_search():
                 else:
                     self.update_theta = False
                     self.update_alpha = True
-                    
+
             n = input.size(0)
             input = input.to(self.device)
             target = target.to(self.device, non_blocking=True)
@@ -486,10 +491,43 @@ class neural_architecture_search():
                 self.arch_optimizer.zero_grad()
 
             if self.args.snas or not self.args.random_sample and not self.args.dsnas:
-                loss.backward()     # total loss grads w.r.t alpha
+                loss.backward()     # total loss grads w.r.t alpha TODO
             if not self.args.random_sample:
                 normal_total_gradient += self.model.normal_log_alpha.grad
                 reduce_total_gradient += self.model.reduce_log_alpha.grad
+
+            if 'sotl' in self.args.alter_metric:
+
+                self.normal_log_alpha_grad_list.append(self.model.normal_log_alpha.grad.clone().detach())
+                self.reduce_log_alpha_grad_list.append(self.model.reduce_log_alpha.grad.clone().detach())
+
+                # print(f'input shape={input.shape}, length_list={len(self.normal_log_alpha_grad_list)} and length_dataque = {len(self.train_queue)}')
+                if len(self.normal_log_alpha_grad_list) >= len(self.train_queue) and len(self.reduce_log_alpha_grad_list) >= len(self.train_queue):
+                    print('remove earliest element')
+                    self.normal_log_alpha_grad_list.pop(0)
+                    self.reduce_log_alpha_grad_list.pop(0)
+
+                # normal_sotl_gradient = torch.mean(self.normal_log_alpha_grad_list)
+                # reduce_sotl_gradient = torch.mean(self.reduce_log_alpha_grad_list) #todo check
+
+                mu = 0.99
+                normal_sotl_gradient = self.normal_log_alpha_grad_list[0]
+                reduce_sotl_gradient = self.reduce_log_alpha_grad_list[0]
+                for grad_idx in range(1, len(self.normal_log_alpha_grad_list)):
+                    if self.args.alter_metric == 'ema_sotl':
+                        normal_sotl_gradient = (1-mu) * normal_sotl_gradient + mu * self.normal_log_alpha_grad_list[grad_idx]
+                        reduce_sotl_gradient = (1-mu) * reduce_sotl_gradient + mu * self.reduce_log_alpha_grad_list[grad_idx]
+                    else:
+                        normal_sotl_gradient += self.normal_log_alpha_grad_list[grad_idx]
+                        reduce_sotl_gradient += self.reduce_log_alpha_grad_list[grad_idx]
+
+                self.model.normal_log_alpha.grad = (normal_sotl_gradient/len(self.normal_log_alpha_grad_list)).to(self.device)
+                self.model.reduce_log_alpha.grad = (reduce_sotl_gradient/len(self.reduce_log_alpha_grad_list)).to(self.device)
+
+                if self.rank == 0 and step % int(10*self.args.report_freq) == 0:
+                    logging.info('------- alpha sotl grad (list length %d )-----', len(self.normal_log_alpha_grad_list))
+                    logging.info(normal_sotl_gradient/len(self.normal_log_alpha_grad_list))
+                    logging.info(reduce_sotl_gradient/len(self.normal_log_alpha_grad_list))
 
             if self.args.distributed:
                 reduce_tensorgradients(self.model.parameters(), sync=True)
