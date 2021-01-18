@@ -18,7 +18,7 @@ from torch.autograd import Variable
 from model_edge_all import NetworkCIFAR as Network
 
 import tensorboardX
-
+import pickle
 parser = argparse.ArgumentParser("cifar")
 parser.add_argument('--data', type=str, default='../data', help='location of the data corpus')
 parser.add_argument('--batch_size', type=int, default=96, help='batch size')
@@ -72,7 +72,17 @@ def main():
     logging.info('gpu device = %d' % args.gpu)
     logging.info("args = %s", args)
 
-    genotype = eval("genotypes.%s" % args.arch)
+    if 'DARTS' in args.arch:
+        # SNAS_DARTS_edge_all
+        genotype_file_name = f'./genotype_stored.pkl'
+        with open(genotype_file_name, 'rb') as file2:
+            genotype_dict = pickle.load(file2)
+
+        genotype = genotype_dict[f'{args.arch}']
+
+    else:
+        genotype = eval("genotypes.%s" % args.arch)
+
     model = Network(args.init_channels, CIFAR_CLASSES, args.layers, args.auxiliary, genotype)
     model = model.cuda()
 

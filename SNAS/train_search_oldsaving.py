@@ -12,8 +12,7 @@ import torch.nn as nn
 import torch.utils
 import torchvision.datasets as dset
 import torch.backends.cudnn as cudnn
-import pickle
-
+    
 parser = argparse.ArgumentParser("cifar")
 
 # General settings
@@ -178,8 +177,7 @@ class neural_architecture_search():
             torch.cuda.manual_seed(self.seed)
             torch.cuda.manual_seed_all(self.seed)
         
-        self.path = self.args.save
-        # self.path = os.path.join(generate_date, self.args.save)
+        self.path = os.path.join(generate_date, self.args.save)
         if self.rank == 0:
             utils.create_exp_dir(generate_date, self.path, scripts_to_save=glob.glob('*.py'))
             logging.basicConfig(stream=sys.stdout, level=logging.INFO,
@@ -310,7 +308,6 @@ class neural_architecture_search():
         
 
     def main(self):
-
         # lr scheduler: cosine annealing
         # temp scheduler: linear annealing (self-defined in utils)
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -321,17 +318,6 @@ class neural_architecture_search():
             self.normal_log_alpha_grad_list = []
             self.reduce_log_alpha_grad_list = []
 
-        # info to be saved
-        results_collection = {'args': self.args}
-        train_acc_list = []
-        train_loss_list = []
-        train_error_loss_list = []
-        train_alpha_loss_list = []
-        valid_acc_list = []
-        valid_loss_list = []
-        valid_acc_childnet_list = []
-        genotype_searched_list = []
-        lr_list = []
         for epoch in range(self.args.epochs):
             if self.args.random_sample_pretrain: # not relevant
                 if epoch < self.args.random_sample_pretrain_epoch: #
@@ -343,7 +329,7 @@ class neural_architecture_search():
             if self.args.temp_annealing:
                 self.model._temp = self.temp_scheduler.step()
             self.lr = self.scheduler.get_lr()[0]
-
+            
             if self.rank == 0:
                 logging.info('epoch %d lr %e temp %e', epoch, self.lr, self.model._temp)
                 self.logger.add_scalar('epoch_temp', self.model._temp, epoch)
@@ -380,19 +366,7 @@ class neural_architecture_search():
             if self.rank == 0:
                 logging.info('valid_acc %f', valid_acc)
                 self.logger.add_scalar("epoch_valid_acc", valid_acc, epoch)
-
-                # save results info
-                lr_list.append(self.lr)
-                train_acc_list.append(train_acc)
-                train_loss_list.append(loss)
-                train_error_loss_list.append(error_loss)
-                train_alpha_loss_list.append(loss_alpha)
-                valid_acc_list.append(valid_acc)
-                valid_loss_list.append(valid_obj)
-                genotype_searched_list.append(genotype_edge_all)
-
                 if self.args.gen_max_child:
-                    valid_acc_childnet_list.append(valid_acc_max_child)
                     logging.info('valid_acc_argmax_alpha %f', valid_acc_max_child)
                     self.logger.add_scalar("epoch_valid_acc_argmax_alpha", valid_acc_max_child, epoch)
 
@@ -404,19 +378,7 @@ class neural_architecture_search():
             genotype_edge_all = self.model.genotype_edge_all()
             logging.info('genotype_edge_all = %s', genotype_edge_all)
 
-            results_collection['train_acc_list'] = train_acc_list
-            results_collection['train_loss_list'] = train_loss_list
-            results_collection['train_error_loss_list'] = train_error_loss_list
-            results_collection['train_alpha_loss_list'] = train_alpha_loss_list
-            results_collection['valid_acc_list'] = valid_acc_list
-            results_collection['valid_loss_list'] = valid_loss_list
-            results_collection['valid_acc_childnet_list'] = valid_acc_childnet_list
-            results_collection['genotype_searched_list'] = genotype_searched_list
-            results_collection['lr_list'] = lr_list
 
-            results_file_name = os.path.join(self.path, 'search_trajectory')
-            with open(results_file_name, 'wb') as outfile:
-                pickle.dump(results_collection, outfile)
 
     def train(self, epoch, logging):
         objs = utils.AvgrageMeter()

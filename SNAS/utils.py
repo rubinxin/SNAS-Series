@@ -112,8 +112,8 @@ def drop_path(x, drop_prob):
 
 
 def create_exp_dir(date, path, scripts_to_save=None):
-    if not os.path.exists(date):
-        os.mkdir(date)
+    # if not os.path.exists(date):
+    #     os.mkdir(date)
     if not os.path.exists(path):
         os.mkdir(path)
     print('Experiment dir : {}'.format(path))
@@ -211,7 +211,8 @@ class Resource_Scheduler(object):
         return self.curr_lambda
 
 def txt(folder, training_name, txt_name, writein, generate_date):
-    b = os.path.abspath('.') + '/' + folder + '/' + generate_date + '/' + training_name
+    # b = os.path.abspath('.') + '/' + folder + '/' + generate_date + '/' + training_name
+    b = os.path.abspath('.') + '/' + training_name + '/' + folder
 
     if not os.path.exists(b):
         os.makedirs(b)

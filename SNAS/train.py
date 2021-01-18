@@ -16,8 +16,9 @@ import torch.backends.cudnn as cudnn
 
 from torch.autograd import Variable
 from model import NetworkCIFAR as Network
-
+import pickle
 import tensorboardX
+from thop import profile
 
 parser = argparse.ArgumentParser("cifar")
 parser.add_argument('--data', type=str, default='../data', help='location of the data corpus')
@@ -38,11 +39,12 @@ parser.add_argument('--cutout_length', type=int, default=16, help='cutout length
 parser.add_argument('--drop_path_prob', type=float, default=0.2, help='drop path probability')
 parser.add_argument('--save', type=str, default='EXP', help='experiment name')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
-parser.add_argument('--arch', type=str, default='SNAS', help='which architecture to use')
+parser.add_argument('--arch', type=str, default='SNAS',
+                    help='which architecture to use: snas_darts_run2_epoch100')
 parser.add_argument('--grad_clip', type=float, default=5, help='gradient clipping')
 args = parser.parse_args()
 
-args.save = 'eval-{}-{}'.format(args.save, time.strftime("%Y%m%d-%H%M%S"))
+args.save = 'eval-{}-{}'.format(args.arch, time.strftime("%Y%m%d-%H%M%S"))
 generate_date = str(datetime.now().date())
 utils.create_exp_dir(generate_date , args.save, scripts_to_save=glob.glob('*.py'))
 
@@ -72,11 +74,30 @@ def main():
     logging.info('gpu device = %d' % args.gpu)
     logging.info("args = %s", args)
 
-    genotype = eval("genotypes.%s" % args.arch)
+    if '_darts_' in args.arch:
+        from collections import namedtuple
+        Genotype = namedtuple('Genotype', 'normal normal_concat reduce reduce_concat')
+        # SNAS_DARTS_edge_all
+        genotype_name = args.arch.split('_epoch')[0]
+        epoch_id = int(args.arch.split('_epoch')[1])
+        genotype_file_name = f'./genetopye_res/{genotype_name}_genotype_child_list.pkl'
+        with open(genotype_file_name, 'rb') as file2:
+            genotype_list = pickle.load(file2)
+        genotype = genotype_list[epoch_id]
+    else:
+        genotype = eval("genotypes.%s" % args.arch)
     model = Network(args.init_channels, CIFAR_CLASSES, args.layers, args.auxiliary, genotype)
     model = model.cuda()
 
-    logging.info("param size = %fMB", utils.count_parameters_in_MB(model))
+    # compute flops and param_count
+    test_x = torch.rand(1, 3, 32, 32).cuda()
+    model.train()
+    n_flops, n_params = profile(model, inputs=(test_x,), verbose=False)
+    param_count = utils.count_parameters_in_MB(model)
+    evaluation_res = {'n_param_MB': param_count, 'n_flops': n_flops, 'n_params': n_params,
+                      'genotype': genotype, 'arch_name': args.arch}
+
+    logging.info("param size = %fMB", param_count)
 
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.cuda()
@@ -99,6 +120,11 @@ def main():
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(args.epochs))
 
+    train_acc_list = []
+    train_loss_list = []
+    valid_acc_list = []
+    valid_loss_list = []
+
     for epoch in range(args.epochs):
         scheduler.step()
         logging.info('epoch %d lr %e', epoch, scheduler.get_lr()[0])
@@ -114,6 +140,19 @@ def main():
 
         utils.save(model, os.path.join(args.save, 'weights.pt'))
 
+        train_acc_list.append(train_acc.cpu().numpy())
+        train_loss_list.append(train_obj.cpu().numpy())
+        valid_acc_list.append(valid_acc.cpu().numpy())
+        valid_loss_list.append(valid_obj.cpu().numpy())
+
+        if epoch % 10 == 0:
+            evaluation_res['train_accs'] = train_acc_list
+            evaluation_res['train_losses'] = train_loss_list
+            evaluation_res['valid_accs'] = valid_acc_list
+            evaluation_res['valid_losses'] = valid_loss_list
+            evaluatino_res_path = f'./genetopye_res/eval_{args.arch}'
+            with open(evaluatino_res_path, 'wb') as file2:
+                pickle.dump(evaluation_res, file2)
 
 def train(train_queue, model, criterion, optimizer, epoch):
     objs = utils.AvgrageMeter()
